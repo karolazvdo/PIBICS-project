@@ -9,7 +9,7 @@
 if (!requireNamespace("pacman", quietly = TRUE)) install.packages("pacman")
 library(pacman)
 
-p_load(rgbif, dplyr, purrr, readr, sf, rnaturalearth, rnaturalearthdata)
+p_load(rgbif, dplyr, purrr, readxl, sf, rnaturalearth, rnaturalearthdata)
 
 # Import dataset
 df <- read_excel("C:/Users/drive/Downloads/Dataset da Wikipedia.xlsx") 
@@ -20,7 +20,7 @@ brasil_shape <- ne_countries(country = "Brazil", scale = "medium", returnclass =
 # --- 1. Function to getting records beyond the 5000 limit ---
 buscar_gbif <- function(Nome_Cientifico) {
   start <- 0  # start point of pagination
-  todos_registros <- list()
+  todos_registros <- tibble() # empty object
   
   repeat {
     # Searching GBIF (active pagination)
@@ -31,22 +31,41 @@ buscar_gbif <- function(Nome_Cientifico) {
     # If there are no records or the data runs out, exit the loop
     if (is.null(res$data) || nrow(res$data) == 0) break
     
-    # Stores the records
-    todos_registros <- append(todos_registros, list(res$data))
+    # Combine results
+    todos_registros <- bind_rows(todos_registros, res$data)
     
     # Updates the start point
     start <- start + 5000
     
     # Progress mensage
-    cat("Buscando mais registros para:", Nome_Cientifico, "- Total coletado:", start, "\n")
+    cat("Registros coletados para:", Nome_Cientifico, "até agora:", nrow(todos_registros), "\n")
+    
+    # Small delay to avoid API throttling
+    Sys.sleep(1)
   }
   
-  # Consolidates data into a single data frame
-  if (length(todos_registros) > 0) {
-    return(do.call(rbind, todos_registros))
-  } else {
-    return(NULL)
+  # If no records were found, return a tibble with NA values to avoid errors
+  if (nrow(todos_registros) == 0) {
+    cat("⚠️ Nenhum registro encontrado para:", Nome_Cientifico, "\n")
+    return(tibble(scientificName = Nome_Cientifico))  # Returns only the column with the species name
   }
+  
+  # Ensure all columns exist by filling missing ones with NA
+  todas_colunas <- c("gbifID", "scientificName", "taxonRank", "taxonomicStatus", "speciesKey",
+                     "acceptedTaxonKey", "class", "order", "family", "species", "genus",
+                     "specificEpithet", "year", "decimalLongitude", "decimalLatitude",
+                     "iucnRedListCategory", "level0Gid", "level0Name", "countryCode",
+                     "institutionCode", "basisOfRecord", "coordinateUncertaintyInMeters")
+  
+  # Add columns that do not exist and fill with NA
+  for (col in todas_colunas) {
+    if (!col %in% names(todos_registros)) {
+      todos_registros[[col]] <- NA
+    }
+  }
+  
+  # Returns records with standardized columns
+  return(todos_registros[, todas_colunas])
 }
 
 # --- 2. Apply search for each species ---
@@ -87,7 +106,8 @@ data <- as.data.frame(data[,c("gbifID", "scientificName", "taxonRank",
                               "taxonomicStatus", "speciesKey",
                               "acceptedTaxonKey", "class", "order",
                               "family", "species", "genus",
-                              "specificEpithet","year", "geometry",
+                              "specificEpithet","year", "decimalLongitude",
+                              "decimalLatitude",
                               "iucnRedListCategory", "basisOfRecord",
                               "coordinateUncertaintyInMeters")])
 
@@ -95,10 +115,6 @@ names(data)
 dim(data)  
 str(data)
 
-# Converting geomtry column into separate coordinates
-data <- data %>%
-  mutate(decimalLongitude = unlist(map(data$geometry,1)),
-         decimalLatitude = unlist(map(data$geometry,2)))
 
 # Replacing empty coordinate cells with NA -----------------------------------
 data <- data %>%
