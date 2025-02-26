@@ -20,9 +20,10 @@ brasil_shape <- ne_countries(country = "Brazil", scale = "medium", returnclass =
 # --- 1. Function to getting records beyond the 5000 limit ---
 buscar_gbif <- function(Nome_Cientifico) {
   start <- 0  # start point of pagination
-  todos_registros <- tibble() # empty object
+  todos_registros <- tibble() # Initialize empty tibble
   
   repeat {
+    tryCatch({
     # Searching GBIF (active pagination)
     res <- occ_search(scientificName = Nome_Cientifico,
                       limit = 5000,
@@ -41,12 +42,17 @@ buscar_gbif <- function(Nome_Cientifico) {
     cat("Registros coletados para:", Nome_Cientifico, "até agora:", nrow(todos_registros), "\n")
     
     # Small delay to avoid API throttling
-    Sys.sleep(1)
-  }
+    Sys.sleep(3)
+    
+  }, error = function(e) {
+    cat("Erro ao coletar registros para:", Nome_Cientifico, "\n")
+    return(NULL)  # If there is an error, return NULL and exit the loop.
+  })
+ }
   
   # If no records were found, return a tibble with NA values to avoid errors
   if (nrow(todos_registros) == 0) {
-    cat("⚠️ Nenhum registro encontrado para:", Nome_Cientifico, "\n")
+    cat("Nenhum registro encontrado para:", Nome_Cientifico, "\n")
     return(tibble(scientificName = Nome_Cientifico))  # Returns only the column with the species name
   }
   
@@ -70,7 +76,40 @@ buscar_gbif <- function(Nome_Cientifico) {
 
 # --- 2. Apply search for each species ---
 cat("Buscando registros no GBIF para cada espécie...\n")
-gbif_registros <- map_df(df$Nome_Cientifico, buscar_gbif)
+
+# Create an object to store partial records
+gbif_registros_parcial <- tibble()
+linha_erro <- NA  # Variable to store the line where the error occurred
+
+# Loop to process each species and save the records in the environment
+for (i in seq_along(df$Nome_Cientifico)) {
+  especie <- df$Nome_Cientifico[i]
+  
+  tryCatch({
+    registros <- buscar_gbif(especie)
+    
+    # If the search was successful, add to the partial dataset
+    if (!is.null(registros)) {
+      gbif_registros_parcial <- bind_rows(gbif_registros_parcial, registros)
+    }
+    
+  }, error = function(e) {
+    cat("Erro ao processar a espécie:", especie, "na linha", i, "\n")
+    linha_erro <<- i  # Save the line where the error occurred
+    return(NULL)
+  })
+}
+
+# Save collected records as far as possible
+if (nrow(gbif_registros_parcial) > 0) {
+  write.csv(gbif_registros_parcial, "gbif_registros_parcial.csv", row.names = FALSE)
+  cat("Registros coletados até o erro foram salvos em 'gbif_registros_parcial.csv'\n")
+}
+
+if (!is.na(linha_erro)) {
+  cat("Ocorreu um erro na linha:", linha_erro, "\n")
+  cat("Para retomar, execute o código alterando 'df <- df[linha_erro:nrow(df), ]'\n")
+}
 
 # --- 3. Filter points within Brazil ---
 if (nrow(gbif_registros) > 0) {
