@@ -100,15 +100,48 @@ for (i in seq_along(df$Nome_Cientifico)) {
   })
 }
 
-# Save collected records as far as possible
-if (nrow(gbif_registros_parcial) > 0) {
-  write.csv(gbif_registros_parcial, "gbif_registros_parcial.csv", row.names = FALSE)
-  cat("Registros coletados até o erro foram salvos em 'gbif_registros_parcial.csv'\n")
+# Finished running the function with the partial records---------------------
+# Compare the two columns and find the values ​​that are in 'df' but not in 'gbif_registros_parcial'
+# Run it again using the difference dataset.
+differents <- df %>%
+  filter(!(Nome_Cientifico %in% gbif_registros_parcial$species))
+
+# Saving the records that have already been captured so as not to overlap the new dataset.
+gbif_registros_round1 <- gbif_registros_parcial
+rm(gbif_registros_parcial) # remove the previous one
+
+# running the function again with the rest
+# Create an object to store partial records
+gbif_registros_parcial <- tibble()
+linha_erro <- NA  # Variable to store the line where the error occurred
+
+# Loop to process each species and save the records in the environment
+for (i in seq_along(differents$Nome_Cientifico)) {
+  especie <- differents$Nome_Cientifico[i]
+  
+  tryCatch({
+    registros <- buscar_gbif(especie)
+    
+    # If the search was successful, add to the partial dataset
+    if (!is.null(registros)) {
+      gbif_registros_parcial <- bind_rows(gbif_registros_parcial, registros)
+    }
+    
+  }, error = function(e) {
+    cat("Erro ao processar a espécie:", especie, "na linha", i, "\n")
+    linha_erro <<- i  # Save the line where the error occurred
+    return(NULL)
+  })
 }
 
-if (!is.na(linha_erro)) {
-  cat("Ocorreu um erro na linha:", linha_erro, "\n")
-  cat("Para retomar, execute o código alterando 'df <- df[linha_erro:nrow(df), ]'\n")
+# join both dataset with records and remove NA values
+gbif_registros <- gbif_registros_round1 %>%
+  rbind(gbif_registros_parcial) %>%
+  filter(., !is.na(species))
+
+# Save collected records as far as possible----------------------------------
+if (nrow(gbif_registros) > 0) {
+  write.csv(gbif_registros, "gbif_registros.csv", row.names = FALSE)
 }
 
 # --- 3. Filter points within Brazil ---
@@ -141,11 +174,10 @@ p_load(dplyr, countrycode, readr, CoordinateCleaner, sf, tidyverse)
 data <- read.csv("gbif_registros_brasil.csv")
 
 # Selecting relevant columns -------------------------------------------------
-data <- as.data.frame(data[,c("gbifID", "scientificName", "taxonRank",
+data <- as.data.frame(data[,c("gbifID", "scientificName",
                               "taxonomicStatus", "speciesKey",
                               "acceptedTaxonKey", "class", "order",
-                              "family", "species", "genus",
-                              "specificEpithet","year", "decimalLongitude",
+                              "family", "species", "year", "decimalLongitude",
                               "decimalLatitude",
                               "iucnRedListCategory", "basisOfRecord",
                               "coordinateUncertaintyInMeters")])
